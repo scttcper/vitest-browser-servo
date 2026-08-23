@@ -8,12 +8,23 @@ permissions:
   contents: read
 
 jobs:
-  package:
+  test:
     runs-on: ubuntu-latest
+    env:
+      EGL_PLATFORM: surfaceless
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      SERVO_SHELL_PATH: ${{ runner.temp }}/servo/servoshell
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/setup@v2
         with:
           runtime: node@26
           cache: true
+      - name: Install Servo
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl --fail --location --remote-name https://github.com/servo/servo/releases/download/v0.4.0/servo-x86_64-linux-gnu.tar.gz
+          curl --fail --location --remote-name https://github.com/servo/servo/releases/download/v0.4.0/servo-x86_64-linux-gnu.tar.gz.sha256
+          sha256sum --check servo-x86_64-linux-gnu.tar.gz.sha256
+          tar --extract --gzip --file servo-x86_64-linux-gnu.tar.gz
       - run: pnpm run check

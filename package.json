@@ -30,7 +30,7 @@
     "test:browser": "node scripts/test-packed-package.mjs --browser",
     "test:package": "pnpm pack --dry-run",
     "typecheck": "tsc --noEmit",
-    "check": "pnpm run test && pnpm run typecheck && pnpm run test:packed && pnpm run test:package"
+    "check": "pnpm run test && pnpm run typecheck && pnpm run test:browser"
   },
   "dependencies": {
     "@vitest/browser": "4.1.11"

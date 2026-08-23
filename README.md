@@ -96,13 +96,15 @@ pnpm run check
 ```
 
 `pnpm run check` runs the provider lifecycle tests, public TypeScript contract,
-and an install/import check against a freshly packed copy of the package. It
-does not require Servo.
+and the React Testing Library example in a real Servo release. The browser test
+installs a freshly packed copy of the package first, so it also validates the
+published package contents and public import.
 
-To run the React Testing Library example in a real Servo release:
+Set `SERVO_SHELL_PATH` when Servo is not in one of the automatically discovered
+locations:
 
 ```sh
-SERVO_SHELL_PATH=/absolute/path/to/servoshell pnpm run test:browser
+SERVO_SHELL_PATH=/absolute/path/to/servoshell pnpm run check
 ```
 
 On Linux, prefix that command with `xvfb-run -a env` when Servo cannot create a
@@ -188,6 +190,7 @@ pnpm run test          # lifecycle, parallel-session isolation, and provider con
 pnpm run typecheck     # public options and "servo" browser-name augmentation
 pnpm run test:packed   # pack, install externally, and import the public package
 pnpm run test:browser  # the packed React/RTL example in a real Servo release
+pnpm run check         # everything above required for a release
 ```
 
 The React/RTL path has been verified with Servo `0.4.0`, Vitest `4.1.11`, React
