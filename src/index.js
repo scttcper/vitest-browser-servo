@@ -1,0 +1,17 @@
+import { defineBrowserProvider } from "@vitest/browser";
+
+import { ServoBrowserProvider } from "./provider.js";
+
+/**
+ * Create a minimal Vitest Browser Mode provider backed by Servo WebDriver.
+ */
+export function servo(options = {}) {
+  return defineBrowserProvider({
+    name: "servo",
+    supportedBrowser: ["servo"],
+    options,
+    providerFactory(project) {
+      return new ServoBrowserProvider(project, options);
+    }
+  });
+}

@@ -1,0 +1,66 @@
+{
+  "name": "@ctrl/vitest-browser-servo",
+  "version": "0.0.1",
+  "description": "An experimental Vitest Browser Mode provider for the Servo browser engine.",
+  "type": "module",
+  "main": "./src/index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./src/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "index.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "prepublishOnly": "pnpm run check",
+    "test": "node --test test/provider.test.mjs",
+    "test:packed": "node scripts/test-packed-package.mjs",
+    "test:browser": "node scripts/test-packed-package.mjs --browser",
+    "test:package": "pnpm pack --dry-run",
+    "typecheck": "tsc --noEmit",
+    "check": "pnpm run test && pnpm run typecheck && pnpm run test:packed && pnpm run test:package"
+  },
+  "dependencies": {
+    "@vitest/browser": "4.1.11"
+  },
+  "peerDependencies": {
+    "vitest": "4.1.11"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  },
+  "keywords": [
+    "servo",
+    "vitest",
+    "browser",
+    "testing",
+    "webdriver"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/scttcper/vitest-browser-servo.git"
+  },
+  "bugs": {
+    "url": "https://github.com/scttcper/vitest-browser-servo/issues"
+  },
+  "homepage": "https://github.com/scttcper/vitest-browser-servo#readme",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  }
+}
