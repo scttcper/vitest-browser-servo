@@ -21,6 +21,8 @@ jobs:
           cache: true
       - name: Install Servo
         run: |
+          sudo apt-get update
+          sudo apt-get install --yes libgstreamer-plugins-bad1.0-0
           cd "$RUNNER_TEMP"
           curl --fail --location --remote-name https://github.com/servo/servo/releases/download/v0.4.0/servo-x86_64-linux-gnu.tar.gz
           curl --fail --location --remote-name https://github.com/servo/servo/releases/download/v0.4.0/servo-x86_64-linux-gnu.tar.gz.sha256
