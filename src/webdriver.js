@@ -208,6 +208,44 @@ async function terminateChild(child, childDone, shutdownTimeout) {
   }
 }
 
+function childExitError(message, { code, signal, error }) {
+  const detail = error?.message
+    ?? (signal ? `signal ${signal}` : `exit code ${code}`);
+  return new Error(`${message} (${detail})`, { cause: error });
+}
+
+function throwCollectedErrors(errors, message) {
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, message);
+}
+
+async function removeConfigDirectory(configDirectory, errors) {
+  try {
+    await rm(configDirectory, { recursive: true, force: true });
+  } catch (error) {
+    errors.push(new Error(`Could not remove Servo config directory ${configDirectory}`, {
+      cause: error
+    }));
+  }
+}
+
+async function finalizeServoProcess({
+  child,
+  childDone,
+  shutdownTimeout,
+  configDirectory,
+  stdoutTail,
+  stderrTail,
+  errors
+}) {
+  try {
+    await terminateChild(child, childDone, shutdownTimeout);
+  } catch (error) {
+    errors.push(withLogs(error, stdoutTail, stderrTail));
+  }
+  await removeConfigDirectory(configDirectory, errors);
+}
+
 function validateArguments(args) {
   if (!Array.isArray(args) || args.some(argument => typeof argument !== "string")) {
     throw new TypeError("args must be an array of strings");
@@ -288,8 +326,9 @@ export async function startServoWebDriver({
       stdio: ["ignore", "pipe", "pipe"]
     });
   } catch (error) {
-    await rm(configDirectory, { recursive: true, force: true });
-    throw new Error(`Could not spawn Servo at ${executable}`, { cause: error });
+    const errors = [new Error(`Could not spawn Servo at ${executable}`, { cause: error })];
+    await removeConfigDirectory(configDirectory, errors);
+    throwCollectedErrors(errors, "Could not spawn Servo or remove its config directory");
   }
   const stdoutTail = tailCollector(child.stdout, "stdout", onOutput);
   const stderrTail = tailCollector(child.stderr, "stderr", onOutput);
@@ -308,7 +347,7 @@ export async function startServoWebDriver({
       if (spawnError) throw spawnError;
       if (child.exitCode !== null || child.signalCode !== null) {
         const status = await childDone;
-        throw new Error(`Servo exited before WebDriver startup (${JSON.stringify(status)})`);
+        throw childExitError("Servo exited before WebDriver startup", status);
       }
       if (await canConnect(port, signal)) {
         listening = true;
@@ -333,9 +372,17 @@ export async function startServoWebDriver({
     sessionId = value?.sessionId;
     if (!sessionId) throw new Error("WebDriver session response did not include value.sessionId");
   } catch (error) {
-    await terminateChild(child, childDone, shutdownTimeout).catch(() => undefined);
-    await rm(configDirectory, { recursive: true, force: true });
-    throw withLogs(error, stdoutTail, stderrTail);
+    const errors = [withLogs(error, stdoutTail, stderrTail)];
+    await finalizeServoProcess({
+      child,
+      childDone,
+      shutdownTimeout,
+      configDirectory,
+      stdoutTail,
+      stderrTail,
+      errors
+    });
+    throwCollectedErrors(errors, "Servo startup and cleanup both failed");
   }
 
   const sessionPath = `session/${encodeURIComponent(sessionId)}`;
@@ -384,7 +431,10 @@ export async function startServoWebDriver({
       if (!closePromise) {
         closePromise = (async () => {
           const errors = [];
-          if (child.exitCode === null && child.signalCode === null && !spawnError) {
+          const childWasRunning = child.exitCode === null
+            && child.signalCode === null
+            && !spawnError;
+          if (childWasRunning) {
             try {
               await request(baseUrl, sessionPath, {
                 method: "DELETE",
@@ -393,16 +443,24 @@ export async function startServoWebDriver({
             } catch (error) {
               errors.push(withLogs(error, stdoutTail, stderrTail));
             }
+          } else {
+            const status = await childDone;
+            errors.push(withLogs(
+              childExitError("Servo exited unexpectedly before WebDriver teardown", status),
+              stdoutTail,
+              stderrTail
+            ));
           }
-          try {
-            await terminateChild(child, childDone, shutdownTimeout);
-          } catch (error) {
-            errors.push(withLogs(error, stdoutTail, stderrTail));
-          } finally {
-            await rm(configDirectory, { recursive: true, force: true });
-          }
-          if (errors.length === 1) throw errors[0];
-          if (errors.length > 1) throw new AggregateError(errors, "Could not cleanly close Servo");
+          await finalizeServoProcess({
+            child,
+            childDone,
+            shutdownTimeout,
+            configDirectory,
+            stdoutTail,
+            stderrTail,
+            errors
+          });
+          throwCollectedErrors(errors, "Could not cleanly close Servo");
         })();
       }
       return closePromise;

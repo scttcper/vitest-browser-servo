@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readdir, readFile, realpath, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtempDisposable,
+  readdir,
+  readFile,
+  realpath,
+  writeFile
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -13,9 +20,10 @@ import { startServoWebDriver } from "../src/webdriver.js";
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const fakeServo = path.join(directory, "fixtures/fake-servoshell.mjs");
 
-async function temporaryFile(name) {
-  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "vitest-servo-test-"));
-  return path.join(tempDirectory, name);
+async function temporaryDirectory(t, prefix = "vitest-servo-test-") {
+  const temporary = await mkdtempDisposable(path.join(os.tmpdir(), prefix));
+  t.after(() => temporary.remove());
+  return temporary.path;
 }
 
 async function readEvents(filename) {
@@ -33,7 +41,7 @@ test("the public factory describes a Servo-only provider", () => {
 test("discovers Servo on PATH and normalizes relative explicit paths", async t => {
   if (process.platform === "win32") t.skip("executable mode semantics differ on Windows");
 
-  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "vitest-servo-path-"));
+  const tempDirectory = await temporaryDirectory(t, "vitest-servo-path-");
   const command = path.join(tempDirectory, "servoshell");
   await writeFile(command, "#!/bin/sh\nexit 0\n");
   await chmod(command, 0o755);
@@ -61,8 +69,9 @@ test("discovers Servo on PATH and normalizes relative explicit paths", async t =
   );
 });
 
-test("starts, drives, and idempotently closes one WebDriver session", async () => {
-  const eventsFile = await temporaryFile("events.jsonl");
+test("starts, drives, and idempotently closes one WebDriver session", async t => {
+  const tempDirectory = await temporaryDirectory(t);
+  const eventsFile = path.join(tempDirectory, "events.jsonl");
   const driver = await startServoWebDriver({
     executable: process.execPath,
     args: [fakeServo],
@@ -91,9 +100,10 @@ test("starts, drives, and idempotently closes one WebDriver session", async () =
   );
 });
 
-test("implements Vitest's provider lifecycle and viewport mapping", async () => {
-  const argsFile = await temporaryFile("args.json");
-  const eventsFile = await temporaryFile("events.jsonl");
+test("implements Vitest's provider lifecycle and viewport mapping", async t => {
+  const tempDirectory = await temporaryDirectory(t);
+  const argsFile = path.join(tempDirectory, "args.json");
+  const eventsFile = path.join(tempDirectory, "events.jsonl");
   const messages = [];
   const project = {
     config: {
@@ -132,9 +142,10 @@ test("implements Vitest's provider lifecycle and viewport mapping", async () => 
   assert(messages.some(message => message.includes("closing WebDriver session")));
 });
 
-test("runs concurrent Vitest sessions in isolated Servo processes", async () => {
-  const barrierFile = await temporaryFile("parallel-barrier.txt");
-  const eventsFile = await temporaryFile("parallel-events.jsonl");
+test("runs concurrent Vitest sessions in isolated Servo processes", async t => {
+  const tempDirectory = await temporaryDirectory(t);
+  const barrierFile = path.join(tempDirectory, "parallel-barrier.txt");
+  const eventsFile = path.join(tempDirectory, "parallel-events.jsonl");
   const project = {
     config: { browser: { headless: true } },
     vitest: { logger: { log() {} } }
@@ -215,6 +226,26 @@ test("rejects a truncated WebDriver response without waiting for the timeout", a
   await assert.rejects(driver.navigate("http://127.0.0.1/"), /aborted|ended early|socket hang up/i);
   assert(performance.now() - startedAt < 1_000);
   await driver.close();
+});
+
+test("reports an unexpected Servo exit during teardown", async t => {
+  const tempDirectory = await temporaryDirectory(t);
+  const eventsFile = path.join(tempDirectory, "events.jsonl");
+  const driver = await startServoWebDriver({
+    executable: process.execPath,
+    args: [fakeServo],
+    env: { FAKE_SERVO_EVENTS_FILE: eventsFile },
+    startupTimeout: 3_000
+  });
+  const [{ pid }] = await readEvents(eventsFile);
+
+  process.kill(pid, "SIGKILL");
+  await delay(100);
+
+  await assert.rejects(
+    driver.close(),
+    /Servo exited unexpectedly before WebDriver teardown \(signal SIGKILL\)/
+  );
 });
 
 test("removes the temporary profile when spawn fails synchronously", async () => {

@@ -27,7 +27,7 @@ function run(command, args, { cwd, env = process.env, capture = false } = {}) {
     child.stdout?.setEncoding("utf8");
     child.stdout?.on("data", chunk => { stdout += chunk; });
     child.once("error", reject);
-    child.once("exit", code => {
+    child.once("close", code => {
       if (code === 0) resolve(stdout);
       else reject(new Error(`${command} ${args.join(" ")} exited with code ${code}`));
     });
