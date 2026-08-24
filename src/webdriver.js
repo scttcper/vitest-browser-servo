@@ -12,10 +12,77 @@ const DEFAULT_NAVIGATION_TIMEOUT = 60_000;
 const DEFAULT_SHUTDOWN_TIMEOUT = 2_500;
 const LOG_TAIL_LIMIT = 32_000;
 
+/** @typedef {"stdout" | "stderr"} OutputChannel */
+/** @typedef {(channel: OutputChannel, chunk: string) => void} OutputHandler */
+/** @typedef {() => string} TailReader */
+/**
+ * @typedef {import("node:child_process").ChildProcessByStdio<
+ *   null,
+ *   import("node:stream").Readable,
+ *   import("node:stream").Readable
+ * >} ServoChild
+ */
+/**
+ * @typedef {{
+ *   code: number | null,
+ *   signal: NodeJS.Signals | null,
+ *   error: Error | undefined
+ * }} ChildExitStatus
+ */
+/**
+ * @typedef {{
+ *   method?: string,
+ *   body?: unknown,
+ *   timeout: number,
+ *   signal?: AbortSignal
+ * }} WebDriverRequestOptions
+ */
+/**
+ * @typedef {{
+ *   method?: string,
+ *   body?: unknown,
+ *   timeout?: number,
+ *   signal?: AbortSignal
+ * }} WebDriverCommandOptions
+ */
+/**
+ * @typedef {{
+ *   executable: string,
+ *   args?: readonly string[],
+ *   env?: Readonly<Record<string, string | undefined>>,
+ *   headless?: boolean,
+ *   screenSize?: string,
+ *   startupTimeout?: number,
+ *   commandTimeout?: number,
+ *   navigationTimeout?: number,
+ *   shutdownTimeout?: number,
+ *   signal?: AbortSignal,
+ *   onOutput?: OutputHandler
+ * }} StartServoWebDriverOptions
+ */
+/**
+ * @typedef {{
+ *   navigate(url: string): Promise<void>,
+ *   execute(script: string, args?: readonly unknown[]): Promise<unknown>,
+ *   executeAsync(script: string, args?: readonly unknown[]): Promise<unknown>,
+ *   close(): Promise<void>
+ * }} ServoWebDriver
+ */
+/** @typedef {{ value: unknown, message?: unknown }} WebDriverEnvelope */
+
+/**
+ * @param {number} milliseconds
+ * @returns {Promise<void>}
+ */
 function delay(milliseconds) {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
+/**
+ * @param {number | undefined} value
+ * @param {number} fallback
+ * @param {string} name
+ */
 function positiveTimeout(value, fallback, name) {
   if (value === undefined) return fallback;
   if (!Number.isFinite(value) || value <= 0) {
@@ -24,16 +91,23 @@ function positiveTimeout(value, fallback, name) {
   return value;
 }
 
+/**
+ * @param {import("node:stream").Readable} stream
+ * @param {OutputChannel} channel
+ * @param {OutputHandler | undefined} onOutput
+ * @returns {TailReader}
+ */
 function tailCollector(stream, channel, onOutput) {
   let tail = "";
-  stream?.setEncoding("utf8");
-  stream?.on("data", chunk => {
+  stream.setEncoding("utf8");
+  stream.on("data", (/** @type {string} */ chunk) => {
     tail = `${tail}${chunk}`.slice(-LOG_TAIL_LIMIT);
     onOutput?.(channel, chunk);
   });
   return () => tail.trimEnd();
 }
 
+/** @returns {Promise<number>} */
 function reservePort() {
   return new Promise((resolve, reject) => {
     const server = createServer();
@@ -51,6 +125,10 @@ function reservePort() {
   });
 }
 
+/**
+ * @param {TailReader} stdoutTail
+ * @param {TailReader} stderrTail
+ */
 function describeLogs(stdoutTail, stderrTail) {
   const stdout = stdoutTail();
   const stderr = stderrTail();
@@ -60,12 +138,18 @@ function describeLogs(stdoutTail, stderrTail) {
   ].filter(Boolean).join("\n");
 }
 
+/**
+ * @param {unknown} error
+ * @param {TailReader} stdoutTail
+ * @param {TailReader} stderrTail
+ */
 function withLogs(error, stdoutTail, stderrTail) {
   const message = error instanceof Error ? error.message : String(error);
   const logs = describeLogs(stdoutTail, stderrTail);
   return new Error(logs ? `${message}\n${logs}` : message, { cause: error });
 }
 
+/** @param {string | undefined} current */
 function mergeNoProxy(current) {
   const values = new Set(
     String(current || "").split(",").map(value => value.trim()).filter(Boolean)
@@ -75,6 +159,10 @@ function mergeNoProxy(current) {
   return [...values].join(",");
 }
 
+/**
+ * @param {Readonly<Record<string, string | undefined>>} overrides
+ * @returns {NodeJS.ProcessEnv}
+ */
 function childEnvironment(overrides) {
   const env = { ...process.env, ...overrides };
   env.NO_PROXY = mergeNoProxy(env.NO_PROXY);
@@ -89,14 +177,42 @@ class CommandTimeoutError extends Error {
   name = "TimeoutError";
 }
 
+/**
+ * @param {unknown} value
+ * @returns {value is Record<string, unknown>}
+ */
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * @param {unknown} value
+ * @returns {value is WebDriverEnvelope}
+ */
+function isWebDriverEnvelope(value) {
+  return isRecord(value) && Object.hasOwn(value, "value");
+}
+
+/** @param {string} message */
+function connectionResetError(message) {
+  return Object.assign(new Error(message), { code: "ECONNRESET" });
+}
+
+/**
+ * @param {string} baseUrl
+ * @param {string} pathname
+ * @param {WebDriverRequestOptions} options
+ * @returns {Promise<unknown>}
+ */
 async function request(baseUrl, pathname, {
   method = "GET",
   body,
   timeout,
   signal
-} = {}) {
+}) {
   const serializedBody = body === undefined ? undefined : JSON.stringify(body);
-  const { statusCode, text } = await new Promise((resolve, reject) => {
+  /** @type {Promise<{ statusCode: number, text: string }>} */
+  const responsePromise = new Promise((resolve, reject) => {
     const command = httpRequest(`${baseUrl}/${pathname}`, {
       method,
       headers: serializedBody === undefined
@@ -109,19 +225,19 @@ async function request(baseUrl, pathname, {
     }, response => {
       response.setEncoding("utf8");
       let text = "";
-      response.on("data", chunk => { text += chunk; });
+      response.on("data", (/** @type {string} */ chunk) => { text += chunk; });
       response.on("end", () => resolve({ statusCode: response.statusCode || 0, text }));
       response.once("error", reject);
       response.once("aborted", () => {
-        const error = new Error(`WebDriver response was aborted (${method} /${pathname})`);
-        error.code = "ECONNRESET";
-        reject(error);
+        reject(connectionResetError(
+          `WebDriver response was aborted (${method} /${pathname})`
+        ));
       });
       response.once("close", () => {
         if (!response.complete) {
-          const error = new Error(`WebDriver response ended early (${method} /${pathname})`);
-          error.code = "ECONNRESET";
-          reject(error);
+          reject(connectionResetError(
+            `WebDriver response ended early (${method} /${pathname})`
+          ));
         }
       });
     });
@@ -133,6 +249,8 @@ async function request(baseUrl, pathname, {
     command.once("error", reject);
     command.end(serializedBody);
   });
+  const { statusCode, text } = await responsePromise;
+  /** @type {unknown} */
   let payload;
   try {
     payload = text ? JSON.parse(text) : { value: null };
@@ -143,15 +261,35 @@ async function request(baseUrl, pathname, {
     );
   }
 
-  if (statusCode < 200 || statusCode >= 300 || payload?.value?.error) {
-    const detail = payload?.value?.message ?? payload?.message ?? `HTTP ${statusCode}`;
+  if (!isWebDriverEnvelope(payload)) {
+    throw new Error(
+      `WebDriver returned an invalid response envelope (HTTP ${statusCode}): ${text.slice(0, 500)}`
+    );
+  }
+
+  const errorValue = isRecord(payload.value) && typeof payload.value.error === "string"
+    ? payload.value
+    : undefined;
+  if (statusCode < 200 || statusCode >= 300 || errorValue) {
+    const detail = typeof errorValue?.message === "string"
+      ? errorValue.message
+      : typeof payload.message === "string"
+        ? payload.message
+        : `HTTP ${statusCode}`;
     const error = new Error(`WebDriver command failed (${method} /${pathname}): ${detail}`);
-    if (payload?.value?.stacktrace) error.stack = `${error.stack}\n${payload.value.stacktrace}`;
+    if (typeof errorValue?.stacktrace === "string") {
+      error.stack = `${error.stack}\n${errorValue.stacktrace}`;
+    }
     throw error;
   }
-  return payload?.value;
+  return payload.value;
 }
 
+/**
+ * @param {number} port
+ * @param {AbortSignal | undefined} signal
+ * @returns {Promise<boolean>}
+ */
 function canConnect(port, signal) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -159,7 +297,9 @@ function canConnect(port, signal) {
       return;
     }
     const socket = createConnection({ host: HOST, port });
-    const abort = () => socket.destroy(signal.reason ?? new Error("Servo startup was aborted"));
+    const abort = () => socket.destroy(
+      signal?.reason ?? new Error("Servo startup was aborted")
+    );
     signal?.addEventListener("abort", abort, { once: true });
     socket.setTimeout(250);
     socket.once("connect", () => {
@@ -168,7 +308,7 @@ function canConnect(port, signal) {
       resolve(true);
     });
     socket.once("timeout", () => socket.destroy());
-    socket.once("error", error => {
+    socket.once("error", (/** @type {Error} */ error) => {
       signal?.removeEventListener("abort", abort);
       if (signal?.aborted) reject(signal.reason ?? error);
       else resolve(false);
@@ -180,6 +320,10 @@ function canConnect(port, signal) {
   });
 }
 
+/**
+ * @param {Promise<ChildExitStatus>} childDone
+ * @param {number} milliseconds
+ */
 async function awaitChild(childDone, milliseconds) {
   let timeout;
   try {
@@ -194,6 +338,11 @@ async function awaitChild(childDone, milliseconds) {
   }
 }
 
+/**
+ * @param {ServoChild} child
+ * @param {Promise<ChildExitStatus>} childDone
+ * @param {number} shutdownTimeout
+ */
 async function terminateChild(child, childDone, shutdownTimeout) {
   if (child.exitCode !== null || child.signalCode !== null) {
     await childDone;
@@ -208,17 +357,31 @@ async function terminateChild(child, childDone, shutdownTimeout) {
   }
 }
 
+/**
+ * @param {string} message
+ * @param {ChildExitStatus} status
+ */
 function childExitError(message, { code, signal, error }) {
   const detail = error?.message
     ?? (signal ? `signal ${signal}` : `exit code ${code}`);
   return new Error(`${message} (${detail})`, { cause: error });
 }
 
+/**
+ * @param {Error[]} errors
+ * @param {string} message
+ * @returns {never}
+ */
 function throwCollectedErrors(errors, message) {
+  if (errors.length === 0) throw new Error("Expected at least one Servo lifecycle error");
   if (errors.length === 1) throw errors[0];
-  if (errors.length > 1) throw new AggregateError(errors, message);
+  throw new AggregateError(errors, message);
 }
 
+/**
+ * @param {string} configDirectory
+ * @param {Error[]} errors
+ */
 async function removeConfigDirectory(configDirectory, errors) {
   try {
     await rm(configDirectory, { recursive: true, force: true });
@@ -229,6 +392,17 @@ async function removeConfigDirectory(configDirectory, errors) {
   }
 }
 
+/**
+ * @param {{
+ *   child: ServoChild,
+ *   childDone: Promise<ChildExitStatus>,
+ *   shutdownTimeout: number,
+ *   configDirectory: string,
+ *   stdoutTail: TailReader,
+ *   stderrTail: TailReader,
+ *   errors: Error[]
+ * }} state
+ */
 async function finalizeServoProcess({
   child,
   childDone,
@@ -246,8 +420,12 @@ async function finalizeServoProcess({
   await removeConfigDirectory(configDirectory, errors);
 }
 
+/** @param {unknown} args */
 function validateArguments(args) {
-  if (!Array.isArray(args) || args.some(argument => typeof argument !== "string")) {
+  if (
+    !Array.isArray(args)
+    || args.some((/** @type {unknown} */ argument) => typeof argument !== "string")
+  ) {
     throw new TypeError("args must be an array of strings");
   }
   const providerOwned = ["--webdriver", "--config-dir", "--screen-size"];
@@ -259,7 +437,12 @@ function validateArguments(args) {
   }
 }
 
-/** Start Servo and create one dependency-free W3C WebDriver session. */
+/**
+ * Start Servo and create one dependency-free W3C WebDriver session.
+ *
+ * @param {StartServoWebDriverOptions} options
+ * @returns {Promise<ServoWebDriver>}
+ */
 export async function startServoWebDriver({
   executable,
   args = [],
@@ -318,6 +501,7 @@ export async function startServoWebDriver({
     `--screen-size=${screenSize}`,
     "about:blank"
   ];
+  /** @type {ServoChild} */
   let child;
   try {
     child = spawn(executable, launchArguments, {
@@ -332,12 +516,15 @@ export async function startServoWebDriver({
   }
   const stdoutTail = tailCollector(child.stdout, "stdout", onOutput);
   const stderrTail = tailCollector(child.stderr, "stderr", onOutput);
+  /** @type {Error | undefined} */
   let spawnError;
   child.once("error", error => { spawnError = error; });
+  /** @type {Promise<ChildExitStatus>} */
   const childDone = new Promise(resolve => {
     child.once("close", (code, signal) => resolve({ code, signal, error: spawnError }));
   });
 
+  /** @type {string} */
   let sessionId;
   try {
     const deadline = Date.now() + startupTimeout;
@@ -369,9 +556,12 @@ export async function startServoWebDriver({
       timeout: remainingStartupTime,
       signal
     });
-    sessionId = value?.sessionId;
-    if (!sessionId) throw new Error("WebDriver session response did not include value.sessionId");
+    if (!isRecord(value) || typeof value.sessionId !== "string" || !value.sessionId) {
+      throw new Error("WebDriver session response did not include value.sessionId");
+    }
+    sessionId = value.sessionId;
   } catch (error) {
+    /** @type {Error[]} */
     const errors = [withLogs(error, stdoutTail, stderrTail)];
     await finalizeServoProcess({
       child,
@@ -386,8 +576,13 @@ export async function startServoWebDriver({
   }
 
   const sessionPath = `session/${encodeURIComponent(sessionId)}`;
+  /** @type {Promise<void> | undefined} */
   let closePromise;
 
+  /**
+   * @param {string} pathname
+   * @param {WebDriverCommandOptions} options
+   */
   function command(pathname, options) {
     if (closePromise) throw new Error("Servo WebDriver session is closed");
     if (child.exitCode !== null || child.signalCode !== null || spawnError) {
@@ -401,12 +596,13 @@ export async function startServoWebDriver({
     });
   }
 
-  return {
-    navigate(url) {
+  /** @type {ServoWebDriver} */
+  const driver = {
+    async navigate(url) {
       if (typeof url !== "string" || url.length === 0) {
         throw new TypeError("url must be a non-empty string");
       }
-      return command("url", {
+      await command("url", {
         method: "POST",
         body: { url },
         timeout: navigationTimeout
@@ -430,6 +626,7 @@ export async function startServoWebDriver({
     close() {
       if (!closePromise) {
         closePromise = (async () => {
+          /** @type {Error[]} */
           const errors = [];
           const childWasRunning = child.exitCode === null
             && child.signalCode === null
@@ -460,10 +657,11 @@ export async function startServoWebDriver({
             stderrTail,
             errors
           });
-          throwCollectedErrors(errors, "Could not cleanly close Servo");
+          if (errors.length) throwCollectedErrors(errors, "Could not cleanly close Servo");
         })();
       }
       return closePromise;
     }
   };
+  return driver;
 }

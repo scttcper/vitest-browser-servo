@@ -1,6 +1,8 @@
 {
   "compilerOptions": {
     "strict": true,
+    "allowJs": true,
+    "checkJs": true,
     "noEmit": true,
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
@@ -17,6 +19,7 @@
   },
   "include": [
     "index.d.ts",
+    "src/**/*.js",
     "test/types.ts"
   ]
 }

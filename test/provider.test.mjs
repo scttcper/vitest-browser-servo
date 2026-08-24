@@ -213,6 +213,18 @@ test("surfaces Servo startup logs and still cleans up", async () => {
   );
 });
 
+test("rejects a WebDriver session response without a session id", async () => {
+  await assert.rejects(
+    startServoWebDriver({
+      executable: process.execPath,
+      args: [fakeServo],
+      env: { FAKE_SERVO_INVALID_SESSION_RESPONSE: "1" },
+      startupTimeout: 3_000
+    }),
+    /session response did not include value\.sessionId/
+  );
+});
+
 test("rejects a truncated WebDriver response without waiting for the timeout", async () => {
   const driver = await startServoWebDriver({
     executable: process.execPath,
@@ -225,6 +237,21 @@ test("rejects a truncated WebDriver response without waiting for the timeout", a
   const startedAt = performance.now();
   await assert.rejects(driver.navigate("http://127.0.0.1/"), /aborted|ended early|socket hang up/i);
   assert(performance.now() - startedAt < 1_000);
+  await driver.close();
+});
+
+test("rejects a malformed WebDriver response envelope", async () => {
+  const driver = await startServoWebDriver({
+    executable: process.execPath,
+    args: [fakeServo],
+    env: { FAKE_SERVO_INVALID_NAVIGATION_ENVELOPE: "1" },
+    startupTimeout: 3_000
+  });
+
+  await assert.rejects(
+    driver.navigate("http://127.0.0.1/"),
+    /WebDriver returned an invalid response envelope/
+  );
   await driver.close();
 });
 

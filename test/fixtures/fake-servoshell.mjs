@@ -68,11 +68,20 @@ const server = createServer(async (request, response) => {
     await record({ method: request.method, path: url.pathname, body });
 
     if (request.method === "POST" && url.pathname === "/session") {
+      if (process.env.FAKE_SERVO_INVALID_SESSION_RESPONSE === "1") {
+        send(response, 200, { capabilities: {} });
+        return;
+      }
       send(response, 200, { sessionId: "fake-session", capabilities: {} });
       return;
     }
     if (request.method === "POST" && url.pathname === "/session/fake-session/url") {
       await waitForParallelPeers();
+      if (process.env.FAKE_SERVO_INVALID_NAVIGATION_ENVELOPE === "1") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ unexpected: true }));
+        return;
+      }
       if (process.env.FAKE_SERVO_ABORT_NAVIGATION === "1") {
         response.writeHead(200, { "content-type": "application/json" });
         response.write('{"value":');

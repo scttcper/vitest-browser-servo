@@ -3,20 +3,47 @@ import { startServoWebDriver } from "./webdriver.js";
 
 const DEFAULT_SCREEN_SIZE = "1024x768";
 
+/** @typedef {import("@ctrl/vitest-browser-servo").ServoProviderOptions} ServoProviderOptions */
+/** @typedef {import("vitest/node").BrowserProvider} BrowserProvider */
+/** @typedef {import("vitest/node").TestProject} TestProject */
+/** @typedef {Awaited<ReturnType<typeof startServoWebDriver>>} ServoDriver */
+/**
+ * @typedef {{
+ *   startupAbortController: AbortController,
+ *   driverPromise: Promise<ServoDriver>
+ * }} ServoSession
+ */
+
+/**
+ * @param {unknown} value
+ * @returns {value is string[]}
+ */
+function isStringArray(value) {
+  return Array.isArray(value)
+    && value.every((/** @type {unknown} */ argument) => typeof argument === "string");
+}
+
+/** @param {NodeJS.ProcessEnv} env */
 function parseEnvironmentArguments(env) {
   if (!env.SERVO_SHELL_ARGS_JSON) return [];
+  /** @type {unknown} */
   let value;
   try {
     value = JSON.parse(env.SERVO_SHELL_ARGS_JSON);
   } catch (error) {
     throw new Error("SERVO_SHELL_ARGS_JSON must contain a JSON array of strings", { cause: error });
   }
-  if (!Array.isArray(value) || value.some(argument => typeof argument !== "string")) {
+  if (!isStringArray(value)) {
     throw new TypeError("SERVO_SHELL_ARGS_JSON must contain a JSON array of strings");
   }
   return value;
 }
 
+/**
+ * @param {TestProject} project
+ * @param {ServoProviderOptions} options
+ * @param {NodeJS.ProcessEnv} env
+ */
 function resolveScreenSize(project, options, env) {
   const explicit = options.screenSize ?? env.SERVO_SCREEN_SIZE;
   if (explicit !== undefined) return explicit;
@@ -28,33 +55,52 @@ function resolveScreenSize(project, options, env) {
   return DEFAULT_SCREEN_SIZE;
 }
 
+/**
+ * @param {ServoProviderOptions} options
+ * @param {NodeJS.ProcessEnv} env
+ */
 function isDebugEnabled(options, env) {
   if (options.debug !== undefined) return options.debug;
   return env.SERVO_PROVIDER_DEBUG === "1";
 }
 
+/** @implements {BrowserProvider} */
 export class ServoBrowserProvider {
   name = "servo";
   supportsParallelism = true;
+  /** @type {TestProject} */
   project;
+  /** @type {ServoProviderOptions} */
   options;
+  /** @type {Map<string, ServoSession>} */
   sessions = new Map();
+  /** @type {Promise<void> | undefined} */
   closePromise;
   closing = false;
 
+  /**
+   * @param {TestProject} project
+   * @param {ServoProviderOptions} [options]
+   */
   constructor(project, options = {}) {
     this.project = project;
     this.options = options;
   }
 
+  /** @returns {Record<string, never>} */
   getCommandsContext() {
     return {};
   }
 
+  /** @param {string} message */
   log(message) {
     this.project.vitest?.logger?.log?.(`[servo] ${message}`);
   }
 
+  /**
+   * @param {string} sessionId
+   * @returns {Promise<ServoDriver>}
+   */
   async openBrowser(sessionId) {
     if (this.closing) throw new Error("The Servo provider is already closed");
 
@@ -76,6 +122,10 @@ export class ServoBrowserProvider {
     return driver;
   }
 
+  /**
+   * @param {string} sessionId
+   * @param {AbortSignal} signal
+   */
   async startBrowser(sessionId, signal) {
     const processEnv = process.env;
     const executable = await resolveServoExecutable({
@@ -105,6 +155,10 @@ export class ServoBrowserProvider {
     });
   }
 
+  /**
+   * @param {string} sessionId
+   * @param {string} url
+   */
   async openPage(sessionId, url) {
     const driver = await this.openBrowser(sessionId);
     await driver.navigate(url);
@@ -127,9 +181,12 @@ export class ServoBrowserProvider {
           this.log(`closing WebDriver session ${sessionId}`);
           await driver.close();
         }));
-        const errors = results
-          .filter(result => result.status === "rejected")
-          .map(result => result.reason);
+        const errors = results.flatMap(result => {
+          if (result.status === "fulfilled") return [];
+          return [result.reason instanceof Error
+            ? result.reason
+            : new Error(String(result.reason))];
+        });
         if (errors.length) {
           throw new AggregateError(errors, "Could not close every Servo WebDriver session");
         }

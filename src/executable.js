@@ -3,10 +3,16 @@ import { access, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+/** @param {string} value */
 function isPathLike(value) {
   return path.isAbsolute(value) || value.includes("/") || value.includes("\\");
 }
 
+/**
+ * @param {string} command
+ * @param {NodeJS.Platform} platform
+ * @param {NodeJS.ProcessEnv} env
+ */
 function executableNames(command, platform, env) {
   if (platform !== "win32" || path.extname(command)) return [command];
   const extensions = (env.PATHEXT || ".EXE;.CMD;.BAT;.COM")
@@ -15,6 +21,10 @@ function executableNames(command, platform, env) {
   return [command, ...extensions.map(extension => `${command}${extension.toLowerCase()}`)];
 }
 
+/**
+ * @param {string} candidate
+ * @param {NodeJS.Platform} platform
+ */
 async function isExecutable(candidate, platform) {
   try {
     await access(candidate, platform === "win32" ? constants.F_OK : constants.X_OK);
@@ -24,6 +34,10 @@ async function isExecutable(candidate, platform) {
   }
 }
 
+/**
+ * @param {string} command
+ * @param {{ cwd: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform }} options
+ */
 async function findCommand(command, { cwd, env, platform }) {
   if (isPathLike(command)) {
     const candidate = path.resolve(cwd, command);
@@ -39,6 +53,10 @@ async function findCommand(command, { cwd, env, platform }) {
   }
 }
 
+/**
+ * @param {NodeJS.Platform} platform
+ * @param {string} homeDirectory
+ */
 function applicationCandidates(platform, homeDirectory) {
   if (platform !== "darwin") return [];
   return [
@@ -49,7 +67,17 @@ function applicationCandidates(platform, homeDirectory) {
   ];
 }
 
-/** Resolve an explicit Servo path or discover `servoshell`/`servo` on PATH. */
+/**
+ * Resolve an explicit Servo path or discover `servoshell`/`servo` on PATH.
+ *
+ * @param {{
+ *   executable?: string,
+ *   cwd?: string,
+ *   env?: NodeJS.ProcessEnv,
+ *   platform?: NodeJS.Platform,
+ *   homeDirectory?: string
+ * }} [options]
+ */
 export async function resolveServoExecutable({
   executable,
   cwd = process.cwd(),

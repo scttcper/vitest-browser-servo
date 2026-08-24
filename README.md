@@ -95,8 +95,9 @@ pnpm install
 pnpm run check
 ```
 
-`pnpm run check` runs the provider lifecycle tests, public TypeScript contract,
-and the React Testing Library examples in both jsdom and a real Servo release.
+`pnpm run check` runs the provider lifecycle tests, strict implementation and
+public TypeScript checks, and the React Testing Library examples in both jsdom
+and a real Servo release.
 The browser test installs a freshly packed copy of the package first, so it also
 validates the published package contents and public import.
 
@@ -208,7 +209,7 @@ rather than bypassed with a source import.
 
 ```sh
 pnpm run test          # lifecycle, parallel-session isolation, and provider contract
-pnpm run typecheck     # public options and "servo" browser-name augmentation
+pnpm run typecheck     # strict source, public options, and browser-name augmentation
 pnpm run test:packed   # pack, install externally, and import the public package
 pnpm run test:browser  # packed React/RTL examples in jsdom and a real Servo release
 pnpm run check         # complete correctness and release gate
