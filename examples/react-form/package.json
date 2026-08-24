@@ -3,8 +3,16 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": "^24.15.0 || >=26.0.0"
+  },
   "scripts": {
-    "test": "vitest run"
+    "test": "pnpm run test:jsdom && pnpm run test:servo",
+    "test:jsdom": "vitest run --config vitest.jsdom.config.js",
+    "test:servo": "vitest run",
+    "benchmark": "node scripts/compare-performance.mjs",
+    "benchmark:jsdom": "vitest run --config vitest.jsdom.config.js test/large-form.jsdom.test.jsx --reporter=json --testNamePattern=\"large React form performance\"",
+    "benchmark:servo": "vitest run test/large-form.browser.test.jsx --reporter=json --testNamePattern=\"large React form performance\""
   },
   "dependencies": {
     "@testing-library/react": "16.3.2",
@@ -15,6 +23,7 @@
   },
   "devDependencies": {
     "@vitest/browser": "4.1.11",
+    "jsdom": "30.0.1",
     "vitest": "4.1.11"
   }
 }

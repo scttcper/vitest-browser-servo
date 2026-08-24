@@ -28,6 +28,7 @@
     "test": "node --test test/provider.test.mjs",
     "test:packed": "node scripts/test-packed-package.mjs",
     "test:browser": "node scripts/test-packed-package.mjs --browser",
+    "benchmark": "node scripts/test-packed-package.mjs --benchmark",
     "test:package": "pnpm pack --dry-run",
     "typecheck": "tsc --noEmit",
     "check": "pnpm run test && pnpm run typecheck && pnpm run test:browser"

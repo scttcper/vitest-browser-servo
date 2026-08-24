@@ -9,6 +9,7 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "vitest-browser-servo-packed-"));
 const consumerDirectory = path.join(temporaryRoot, "consumer");
 const runBrowser = process.argv.includes("--browser");
+const runBenchmark = process.argv.includes("--benchmark");
 const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 
 process.once("exit", () => {
@@ -64,8 +65,10 @@ await run(
   { cwd: consumerDirectory }
 );
 
-if (runBrowser) {
-  await run(pnpmCommand, ["run", "test"], { cwd: consumerDirectory });
+if (runBrowser || runBenchmark) {
+  await run(pnpmCommand, ["run", runBenchmark ? "benchmark" : "test"], {
+    cwd: consumerDirectory
+  });
 } else {
   console.log(`Packed consumer import passed: ${filename}`);
   console.log("Set SERVO_SHELL_PATH and run `pnpm run test:browser` for the real Servo suite.");

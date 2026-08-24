@@ -96,9 +96,9 @@ pnpm run check
 ```
 
 `pnpm run check` runs the provider lifecycle tests, public TypeScript contract,
-and the React Testing Library example in a real Servo release. The browser test
-installs a freshly packed copy of the package first, so it also validates the
-published package contents and public import.
+and the React Testing Library examples in both jsdom and a real Servo release.
+The browser test installs a freshly packed copy of the package first, so it also
+validates the published package contents and public import.
 
 Set `SERVO_SHELL_PATH` when Servo is not in one of the automatically discovered
 locations:
@@ -109,6 +109,27 @@ SERVO_SHELL_PATH=/absolute/path/to/servoshell pnpm run check
 
 On Linux, prefix that command with `xvfb-run -a env` when Servo cannot create a
 display or graphics surface directly.
+
+## Compare large-form performance
+
+The React fixture includes the same stress suite for Servo and jsdom `30.0.1`:
+
+- render 200 controlled text inputs and discover them by accessible role;
+- change scattered fields, replace every field, and then clear every field;
+- discover 80 action buttons and dispatch events across the button bank.
+
+Run both environments against the freshly packed package:
+
+```sh
+SERVO_SHELL_PATH=/absolute/path/to/servoshell pnpm run benchmark
+```
+
+The command warms up each runtime, alternates their execution order across six
+measured samples, and prints per-scenario medians, ranges, and ratios. It remains
+a directional diagnostic rather than a stable benchmark, so there are no
+performance thresholds in CI. Correctness assertions for every bulk-updated
+field are part of `pnpm run check`. The jsdom comparison requires Node
+`24.15–24.x` or Node `26+`; the provider itself continues to support Node `24+`.
 
 ## Write ordinary browser tests
 
@@ -189,11 +210,12 @@ rather than bypassed with a source import.
 pnpm run test          # lifecycle, parallel-session isolation, and provider contract
 pnpm run typecheck     # public options and "servo" browser-name augmentation
 pnpm run test:packed   # pack, install externally, and import the public package
-pnpm run test:browser  # the packed React/RTL example in a real Servo release
-pnpm run check         # everything above required for a release
+pnpm run test:browser  # packed React/RTL examples in jsdom and a real Servo release
+pnpm run check         # complete correctness and release gate
+pnpm run benchmark     # repeated large-form comparison between jsdom and Servo
 ```
 
 The React/RTL path has been verified with Servo `0.4.0`, Vitest `4.1.11`, React
-`19.2.8`, React Testing Library `16.3.2`, and `user-event` `14.6.6`. Parallel
-worker lifecycle and isolation are additionally covered with independent fake
-Servo processes in the provider contract suite.
+`19.2.8`, jsdom `30.0.1`, React Testing Library `16.3.2`, and `user-event`
+`14.6.6`. Parallel worker lifecycle and isolation are additionally covered with
+independent fake Servo processes in the provider contract suite.
